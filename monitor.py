@@ -1,9 +1,11 @@
-
 from time import sleep
 import sys
 
-def is_temperature_ok(temperature):
-  return 95 <= temperature <= 102
+VITAL_RANGES = {
+    'temperature': {'min': 95, 'max': 102,'alert': 'Temperature critical!'},
+    'pulse': {'min': 60, 'max': 100,'alert': 'Pulse Rate is out of range!'},
+    'spo2': {'min': 90, 'max': None,'alert': 'Oxygen Saturation out of range!'}, 
+}
 
 def alert_message(message):
   print(message)
@@ -15,22 +17,21 @@ def alert_message(message):
     sys.stdout.flush()
     sleep(1)
 
-def is_pulse_ok(pulse):
-  return 60 <= pulse <= 100
+def is_vital_ok(vital_name, value):
+    vital = VITAL_RANGES[vital_name]
+    if vital['min'] is not None and vital['max'] is not None :
+      return vital['min'] <= value <= vital['max']
+    elif vital['min'] is None : 
+      return value<=vital['max']
+    elif vital['max'] is None:
+      return value>=vital['min']
 
-def is_spo2_ok(spo2):
-  return spo2>=90
 
-def vitals_ok(temperature, pulseRate, spo2):
-  are_vitals_ok=True
-  if not is_temperature_ok(temperature):
-    alert_message('Temperature critical!')
-    are_vitals_ok= False
-  if not is_pulse_ok(pulseRate):
-    alert_message('Pulse Rate is out of range!')
-    are_vitals_ok= False
-  if not is_spo2_ok(spo2):
-    alert_message('Oxygen Saturation out of range!')
-    are_vitals_ok= False
-  return are_vitals_ok
+def check_vital(vital_name,value):
+    if not is_vital_ok(vital_name,value):
+        alert_message(VITAL_RANGES[vital_name]['alert'])
+        return False
+    return True
 
+def vitals_ok(vitals):
+    return all(check_vital(vital,value) for vital,value in vitals.items())
