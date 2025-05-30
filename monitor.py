@@ -36,21 +36,22 @@ def celsius_to_fahrenheit(celsius):
 
 def normalize_temperature(value, unit):
     """Convert temperature to standard unit (Fahrenheit)."""
-    if unit.upper() == 'C':
+    unit_upper = unit.upper()
+    if unit_upper == 'C':
         return celsius_to_fahrenheit(value)
-    elif unit.upper() == 'F':
+    if unit_upper == 'F':
         return value
-    else:
-        raise ValueError(f"Unsupported temperature unit: {unit}. Use 'C' or 'F'.")
+    raise ValueError(f"Unsupported temperature unit: {unit}. Use 'C' or 'F'.")
+
+def _needs_temperature_conversion(vital_name, unit):
+    """Check if vital needs temperature unit conversion."""
+    return vital_name == 'temperature' and unit is not None
 
 def normalize_vital_value(vital_name, value, unit=None):
     """Convert vital value to standard unit if needed."""
-    if vital_name == 'temperature' and unit is not None:
+    if _needs_temperature_conversion(vital_name, unit):
         return normalize_temperature(value, unit)
-    elif vital_name in ['pulse', 'spo2']:
-        # These don't need unit conversion currently
-        return value
-    # Default case - no conversion needed
+    # Default case - no conversion needed for pulse, spo2, or temperature without unit
     return value
 
 def _calculate_tolerance(max_val):
@@ -107,61 +108,98 @@ def alert_message(message):
         sys.stdout.flush()
         sleep(1)
 
+def _has_both_limits(vital):
+    """Check if vital has both min and max limits."""
+    return vital['min'] is not None and vital['max'] is not None
+
+def _check_range_with_both_limits(normalized_value, vital):
+    """Check if value is within range when both min and max are defined."""
+    return vital['min'] <= normalized_value <= vital['max']
+
+def _check_range_with_max_only(normalized_value, vital):
+    """Check if value is within range when only max is defined."""
+    return normalized_value <= vital['max']
+
+def _check_range_with_min_only(normalized_value, vital):
+    """Check if value is within range when only min is defined."""
+    return normalized_value >= vital['min']
+
 def is_vital_ok(vital_name, value, unit=None):
     """Check if vital is within normal range."""
     normalized_value = normalize_vital_value(vital_name, value, unit)
     vital = VITAL_RANGES[vital_name]
-    if vital['min'] is not None and vital['max'] is not None :
-      return vital['min'] <= normalized_value <= vital['max']
-    elif vital['min'] is None : 
-      return normalized_value<=vital['max']
-    elif vital['max'] is None:
-      return normalized_value>=vital['min']
+    
+    if _has_both_limits(vital):
+        return _check_range_with_both_limits(normalized_value, vital)
+    if vital['min'] is None:
+        return _check_range_with_max_only(normalized_value, vital)
+    return _check_range_with_min_only(normalized_value, vital)
+
+def _check_low_warning_range(normalized_value, warning_ranges):
+    """Check if value is in low warning range."""
+    if not warning_ranges['warning_low_range']:
+        return False
+    low_min, low_max = warning_ranges['warning_low_range']
+    return low_min <= normalized_value <= low_max
+
+def _check_high_warning_range(normalized_value, warning_ranges):
+    """Check if value is in high warning range."""
+    if not warning_ranges['warning_high_range']:
+        return False
+    high_min, high_max = warning_ranges['warning_high_range']
+    return high_min <= normalized_value <= high_max
 
 def is_in_warning_range(vital_name, value, unit=None):
     """Check if vital is in warning range."""
     normalized_value = normalize_vital_value(vital_name, value, unit)
     warning_ranges = calculate_warning_ranges(vital_name)
     
-    # Check lower warning range (
-    if warning_ranges['warning_low_range']:
-        low_min, low_max = warning_ranges['warning_low_range']
-        if low_min <= normalized_value <= low_max:
-            return 'low'
-    
-    # Check upper warning range 
-    if warning_ranges['warning_high_range']:
-        high_min, high_max = warning_ranges['warning_high_range']
-        if high_min <= normalized_value <= high_max:
-            return 'high'
-    
+    if _check_low_warning_range(normalized_value, warning_ranges):
+        return 'low'
+    if _check_high_warning_range(normalized_value, warning_ranges):
+        return 'high'
     return False
+
+def _format_display_value(value, vital_name, unit):
+    """Format the display value with appropriate unit."""
+    if vital_name == 'temperature' and unit:
+        return f"{value}°{unit.upper()}"
+    return str(value)
+
+def _handle_warning_in_range(warning_type, vital_name, display_value):
+    """Handle warning message display and return appropriate status."""
+    if warning_type == 'low':
+        warning_message(f"{VITAL_RANGES[vital_name]['warning_low']} (Value: {display_value})")
+        return 'warning'
+    if warning_type == 'high':
+        warning_message(f"{VITAL_RANGES[vital_name]['warning_high']} (Value: {display_value})")
+        return 'warning'
+    return 'ok'
 
 def check_vital_with_warning(vital_name, value, unit=None):
     """Check vital and display appropriate warning or alert."""
-    # Format the value with unit for display
-    display_value = f"{value}°{unit.upper()}" if vital_name == 'temperature' and unit else str(value)
+    display_value = _format_display_value(value, vital_name, unit)
     
-    # First check if it's in normal range
     if is_vital_ok(vital_name, value, unit):
-        # Value is in normal range, check if it's in warning zone
         warning_type = is_in_warning_range(vital_name, value, unit)
-        if warning_type == 'low':
-            warning_message(f"{VITAL_RANGES[vital_name]['warning_low']} (Value: {display_value})")
-            return 'warning'
-        elif warning_type == 'high':
-            warning_message(f"{VITAL_RANGES[vital_name]['warning_high']} (Value: {display_value})")
-            return 'warning'
-        else:
-            return 'ok'
-    else:
-        # Value is outside normal range - this is critical
-        alert_message(f"{VITAL_RANGES[vital_name]['alert']} (Value: {display_value})")
-        return 'critical'
+        return _handle_warning_in_range(warning_type, vital_name, display_value)
+    
+    alert_message(f"{VITAL_RANGES[vital_name]['alert']} (Value: {display_value})")
+    return 'critical'
 
 def check_vital(vital_name, value, unit=None):
     result = check_vital_with_warning(vital_name, value, unit)
     return result == 'ok' or result == 'warning'
+
+def _is_unit_format(vital_data):
+    """Check if vital data is in unit format (dictionary with 'value' key)."""
+    return isinstance(vital_data, dict) and 'value' in vital_data
+
+def _extract_vital_data(vital_data):
+    """Extract value and unit from vital data, handling both formats."""
+    if _is_unit_format(vital_data):
+        return vital_data['value'], vital_data.get('unit', None)
+    return vital_data, None
 
 def vitals_ok(vitals):
     """Check all vitals and return True if all are OK or just warnings.
@@ -171,15 +209,7 @@ def vitals_ok(vitals):
     - With units: {'temperature': {'value': 37, 'unit': 'C'}, 'pulse': 70, 'spo2': 95}
     """
     for vital_name, vital_data in vitals.items():
-        if isinstance(vital_data, dict) and 'value' in vital_data:
-            # New format with units
-            value = vital_data['value']
-            unit = vital_data.get('unit', None)
-        else:
-            # Legacy format - just the value
-            value = vital_data
-            unit = None
-        
+        value, unit = _extract_vital_data(vital_data)
         if not check_vital(vital_name, value, unit):
             return False
     return True
