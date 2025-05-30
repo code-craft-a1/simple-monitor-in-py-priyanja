@@ -50,9 +50,39 @@ def normalize_vital_value(vital_name, value, unit=None):
     elif vital_name in ['pulse', 'spo2']:
         # These don't need unit conversion currently
         return value
-    else:
-        # Default case - no conversion needed
-        return value
+    # Default case - no conversion needed
+    return value
+
+def _calculate_tolerance(max_val):
+    """Calculate tolerance value based on maximum value."""
+    return max_val * WARNING_TOLERANCE_PERCENT / 100
+
+def _get_warning_range_or_none(min_val, max_val):
+    """Return warning range tuple or None if min_val is None."""
+    return (min_val, max_val) if min_val is not None else None
+
+def _calculate_ranges_with_max(min_val, max_val):
+    """Calculate warning ranges for vitals that have both min and max values."""
+    tolerance = _calculate_tolerance(max_val)
+    warning_low_max = min_val + tolerance if min_val is not None else None
+    warning_high_min = max_val - tolerance
+    return {
+        'warning_low_range': _get_warning_range_or_none(min_val, warning_low_max),
+        'warning_high_range': (warning_high_min, max_val)
+    }
+
+def _calculate_ranges_without_max(vital_name, min_val):
+    """Calculate warning ranges for vitals that only have minimum values (like spo2)."""
+    if min_val is None:
+        return {'warning_low_range': None, 'warning_high_range': None}
+    
+    assumed_max = 100 if vital_name == 'spo2' else min_val * 2
+    tolerance = _calculate_tolerance(assumed_max)
+    warning_low_max = min_val + tolerance
+    return {
+        'warning_low_range': (min_val, warning_low_max),
+        'warning_high_range': None
+    }
 
 def calculate_warning_ranges(vital_name):
     """Calculate warning ranges based on 1.5% tolerance of upper limit."""
@@ -60,25 +90,8 @@ def calculate_warning_ranges(vital_name):
     min_val, max_val = vital['min'], vital['max']
     
     if max_val is not None:
-        tolerance = max_val * WARNING_TOLERANCE_PERCENT / 100
-        warning_low_max = min_val + tolerance if min_val is not None else None
-        warning_high_min = max_val - tolerance
-        return {
-            'warning_low_range': (min_val, warning_low_max) if min_val is not None else None,
-            'warning_high_range': (warning_high_min, max_val)
-        }
-    else:
-        # For spo2 which has no upper limit, only calculate lower warning
-        if min_val is not None:
-            # Use a reasonable upper value for calculation (e.g., 100 for spo2)
-            assumed_max = 100 if vital_name == 'spo2' else min_val * 2
-            tolerance = assumed_max * WARNING_TOLERANCE_PERCENT / 100
-            warning_low_max = min_val + tolerance
-            return {
-                'warning_low_range': (min_val, warning_low_max),
-                'warning_high_range': None
-            }
-    return {'warning_low_range': None, 'warning_high_range': None}
+        return _calculate_ranges_with_max(min_val, max_val)
+    return _calculate_ranges_without_max(vital_name, min_val)
 
 def warning_message(message):
     """Display warning message."""
