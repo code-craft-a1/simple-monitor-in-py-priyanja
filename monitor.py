@@ -1,21 +1,25 @@
 from time import sleep
 import sys
 
+# Standard units and ranges (temperature in Fahrenheit)
 VITAL_RANGES = {
     'temperature': {
         'min': 95, 'max': 102, 
+        'standard_unit': 'F',
         'alert': 'Temperature critical!',
         'warning_low': 'Warning: Approaching hypothermia',
         'warning_high': 'Warning: Approaching hyperthermia'
     },
     'pulse': {
         'min': 60, 'max': 100, 
+        'standard_unit': 'bpm',
         'alert': 'Pulse Rate is out of range!',
         'warning_low': 'Warning: Approaching low pulse rate',
         'warning_high': 'Warning: Approaching high pulse rate'
     },
     'spo2': {
         'min': 90, 'max': None, 
+        'standard_unit': '%',
         'alert': 'Oxygen Saturation out of range!',
         'warning_low': 'Warning: Approaching low oxygen saturation',
         'warning_high': None
@@ -23,6 +27,32 @@ VITAL_RANGES = {
 }
 
 WARNING_TOLERANCE_PERCENT = 1.5
+
+# Unit conversion functions
+def celsius_to_fahrenheit(celsius):
+    """Convert Celsius to Fahrenheit."""
+    return (celsius * 9/5) + 32
+
+
+def normalize_temperature(value, unit):
+    """Convert temperature to standard unit (Fahrenheit)."""
+    if unit.upper() == 'C':
+        return celsius_to_fahrenheit(value)
+    elif unit.upper() == 'F':
+        return value
+    else:
+        raise ValueError(f"Unsupported temperature unit: {unit}. Use 'C' or 'F'.")
+
+def normalize_vital_value(vital_name, value, unit=None):
+    """Convert vital value to standard unit if needed."""
+    if vital_name == 'temperature' and unit is not None:
+        return normalize_temperature(value, unit)
+    elif vital_name in ['pulse', 'spo2']:
+        # These don't need unit conversion currently
+        return value
+    else:
+        # Default case - no conversion needed
+        return value
 
 def calculate_warning_ranges(vital_name):
     """Calculate warning ranges based on 1.5% tolerance of upper limit."""
@@ -64,56 +94,79 @@ def alert_message(message):
         sys.stdout.flush()
         sleep(1)
 
-def is_vital_ok(vital_name, value):
+def is_vital_ok(vital_name, value, unit=None):
     """Check if vital is within normal range."""
+    normalized_value = normalize_vital_value(vital_name, value, unit)
     vital = VITAL_RANGES[vital_name]
     if vital['min'] is not None and vital['max'] is not None :
-      return vital['min'] <= value <= vital['max']
+      return vital['min'] <= normalized_value <= vital['max']
     elif vital['min'] is None : 
-      return value<=vital['max']
+      return normalized_value<=vital['max']
     elif vital['max'] is None:
-      return value>=vital['min']
+      return normalized_value>=vital['min']
 
-def is_in_warning_range(vital_name, value):
+def is_in_warning_range(vital_name, value, unit=None):
     """Check if vital is in warning range."""
+    normalized_value = normalize_vital_value(vital_name, value, unit)
     warning_ranges = calculate_warning_ranges(vital_name)
     
     # Check lower warning range (
     if warning_ranges['warning_low_range']:
         low_min, low_max = warning_ranges['warning_low_range']
-        if low_min <= value <= low_max:
+        if low_min <= normalized_value <= low_max:
             return 'low'
     
     # Check upper warning range 
     if warning_ranges['warning_high_range']:
         high_min, high_max = warning_ranges['warning_high_range']
-        if high_min <= value <= high_max:
+        if high_min <= normalized_value <= high_max:
             return 'high'
     
     return False
 
-def check_vital_with_warning(vital_name, value):
+def check_vital_with_warning(vital_name, value, unit=None):
     """Check vital and display appropriate warning or alert."""
-    if is_vital_ok(vital_name, value):
+    # Format the value with unit for display
+    display_value = f"{value}°{unit.upper()}" if vital_name == 'temperature' and unit else str(value)
+    
+    # First check if it's in normal range
+    if is_vital_ok(vital_name, value, unit):
         # Value is in normal range, check if it's in warning zone
-        warning_type = is_in_warning_range(vital_name, value)
+        warning_type = is_in_warning_range(vital_name, value, unit)
         if warning_type == 'low':
-            warning_message(VITAL_RANGES[vital_name]['warning_low'])
+            warning_message(f"{VITAL_RANGES[vital_name]['warning_low']} (Value: {display_value})")
             return 'warning'
         elif warning_type == 'high':
-            warning_message(VITAL_RANGES[vital_name]['warning_high'])
+            warning_message(f"{VITAL_RANGES[vital_name]['warning_high']} (Value: {display_value})")
             return 'warning'
         else:
             return 'ok'
     else:
         # Value is outside normal range - this is critical
-        alert_message(VITAL_RANGES[vital_name]['alert'])
+        alert_message(f"{VITAL_RANGES[vital_name]['alert']} (Value: {display_value})")
         return 'critical'
 
-def check_vital(vital_name, value):
-    result = check_vital_with_warning(vital_name, value)
+def check_vital(vital_name, value, unit=None):
+    result = check_vital_with_warning(vital_name, value, unit)
     return result == 'ok' or result == 'warning'
 
 def vitals_ok(vitals):
-    """Check all vitals and return True if all are OK or just warnings."""
-    return all(check_vital(vital,value) for vital,value in vitals.items())
+    """Check all vitals and return True if all are OK or just warnings.
+    
+    vitals can be:
+    - Simple format: {'temperature': 98.6, 'pulse': 70, 'spo2': 95}
+    - With units: {'temperature': {'value': 37, 'unit': 'C'}, 'pulse': 70, 'spo2': 95}
+    """
+    for vital_name, vital_data in vitals.items():
+        if isinstance(vital_data, dict) and 'value' in vital_data:
+            # New format with units
+            value = vital_data['value']
+            unit = vital_data.get('unit', None)
+        else:
+            # Legacy format - just the value
+            value = vital_data
+            unit = None
+        
+        if not check_vital(vital_name, value, unit):
+            return False
+    return True

@@ -1,6 +1,7 @@
 import unittest
 from monitor import *
 
+#We need to reduce the overlapping tests added beacuse of extensions
 
 class MonitorTest(unittest.TestCase):
   def test_temperature(self):
@@ -130,6 +131,130 @@ class MonitorTest(unittest.TestCase):
   def test_warning_tolerance_percentage(self):
     # Test that the warning tolerance is correctly set to 1.5%
     self.assertEqual(WARNING_TOLERANCE_PERCENT, 1.5)
+
+  # Unit functionality tests
+  def test_celsius_to_fahrenheit_conversion(self):
+    # Test Celsius to Fahrenheit conversion
+    self.assertAlmostEqual(celsius_to_fahrenheit(0), 32.0, places=1)
+    self.assertAlmostEqual(celsius_to_fahrenheit(37), 98.6, places=1)
+    self.assertAlmostEqual(celsius_to_fahrenheit(100), 212.0, places=1)
+    self.assertAlmostEqual(celsius_to_fahrenheit(-40), -40.0, places=1)
+
+  def test_normalize_temperature_celsius(self):
+    # Test temperature normalization from Celsius
+    self.assertAlmostEqual(normalize_temperature(37, 'C'), 98.6, places=1)
+    self.assertAlmostEqual(normalize_temperature(35, 'c'), 95.0, places=1)  # lowercase
+    self.assertAlmostEqual(normalize_temperature(39, 'C'), 102.2, places=1)
+
+  def test_normalize_temperature_fahrenheit(self):
+    # Test temperature normalization from Fahrenheit (should be unchanged)
+    self.assertEqual(normalize_temperature(98.6, 'F'), 98.6)
+    self.assertEqual(normalize_temperature(95, 'f'), 95)  # lowercase
+    self.assertEqual(normalize_temperature(102, 'F'), 102)
+
+  def test_normalize_temperature_invalid_unit(self):
+    # Test invalid temperature unit raises ValueError
+    with self.assertRaises(ValueError):
+        normalize_temperature(37, 'K')  # Kelvin
+    with self.assertRaises(ValueError):
+        normalize_temperature(37, 'X')  # Invalid unit
+
+  def test_normalize_vital_value_temperature(self):
+    # Test normalizing temperature values
+    self.assertAlmostEqual(normalize_vital_value('temperature', 37, 'C'), 98.6, places=1)
+    self.assertEqual(normalize_vital_value('temperature', 98.6, 'F'), 98.6)
+    self.assertEqual(normalize_vital_value('temperature', 98.6, None), 98.6)
+
+  def test_normalize_vital_value_other_vitals(self):
+    # Test normalizing other vital values (should be unchanged)
+    self.assertEqual(normalize_vital_value('pulse', 70, None), 70)
+    self.assertEqual(normalize_vital_value('spo2', 95, None), 95)
+    self.assertEqual(normalize_vital_value('pulse', 70, 'bpm'), 70)  # Unit ignored for pulse
+
+  def test_is_vital_ok_with_celsius_temperature(self):
+    # Test vital checking with Celsius temperatures
+    self.assertTrue(is_vital_ok('temperature', 37.0, 'C'))    # Normal: 37°C = 98.6°F
+    self.assertTrue(is_vital_ok('temperature', 35.0, 'C'))    # Border: 35°C = 95°F
+    self.assertTrue(is_vital_ok('temperature', 38.9, 'C'))    # Border: 38.9°C ≈ 102°F
+    self.assertFalse(is_vital_ok('temperature', 34.0, 'C'))   # Too low: 34°C = 93.2°F
+    self.assertFalse(is_vital_ok('temperature', 40.0, 'C'))   # Too high: 40°C = 104°F
+
+  def test_is_vital_ok_with_fahrenheit_temperature(self):
+    # Test vital checking with Fahrenheit temperatures (backward compatibility)
+    self.assertTrue(is_vital_ok('temperature', 98.6, 'F'))
+    self.assertTrue(is_vital_ok('temperature', 95, 'F'))
+    self.assertTrue(is_vital_ok('temperature', 102, 'F'))
+    self.assertFalse(is_vital_ok('temperature', 94, 'F'))
+    self.assertFalse(is_vital_ok('temperature', 103, 'F'))
+
+
+  def test_check_vital_with_warning_celsius(self):
+    # Test warning function with Celsius temperatures
+    self.assertEqual(check_vital_with_warning('temperature', 37.0, 'C'), 'ok')
+    self.assertEqual(check_vital_with_warning('temperature', 35.3, 'C'), 'warning')  # ~95.5°F
+    self.assertEqual(check_vital_with_warning('temperature', 38.7, 'C'), 'warning')  # ~101.7°F
+    self.assertEqual(check_vital_with_warning('temperature', 34.0, 'C'), 'critical')
+    self.assertEqual(check_vital_with_warning('temperature', 40.0, 'C'), 'critical')
+
+  def test_vitals_ok_with_unit_dictionary_format(self):
+    # Test vitals_ok with new unit dictionary format
+    vitals_celsius = {
+        'temperature': {'value': 37.0, 'unit': 'C'},
+        'pulse': 70,
+        'spo2': 95
+    }
+    self.assertTrue(vitals_ok(vitals_celsius))
+
+    vitals_fahrenheit = {
+        'temperature': {'value': 98.6, 'unit': 'F'},
+        'pulse': 70,
+        'spo2': 95
+    }
+    self.assertTrue(vitals_ok(vitals_fahrenheit))
+
+  def test_vitals_ok_with_mixed_formats(self):
+    # Test mixing dictionary format and simple values
+    vitals_mixed = {
+        'temperature': {'value': 36.0, 'unit': 'C'},  # ~96.8°F - warning
+        'pulse': 70,  # Simple format
+        'spo2': 95    # Simple format
+    }
+    self.assertTrue(vitals_ok(vitals_mixed))  # Should accept warnings
+
+  def test_vitals_ok_with_critical_celsius_temperature(self):
+    # Test critical temperature in Celsius
+    vitals_critical = {
+        'temperature': {'value': 34.0, 'unit': 'C'},  # ~93.2°F - critical
+        'pulse': 70,
+        'spo2': 95
+    }
+    self.assertFalse(vitals_ok(vitals_critical))
+
+  def test_vitals_ok_legacy_format_unchanged(self):
+    # Test that legacy format still works exactly as before
+    vitals_legacy = {'temperature': 98.6, 'pulse': 70, 'spo2': 95}
+    self.assertTrue(vitals_ok(vitals_legacy))
+    
+    vitals_legacy_critical = {'temperature': 94.0, 'pulse': 70, 'spo2': 95}
+    self.assertFalse(vitals_ok(vitals_legacy_critical))
+
+  def test_check_vital_with_unit_parameter(self):
+    # Test check_vital function with unit parameter
+    self.assertTrue(check_vital('temperature', 37.0, 'C'))   # Normal
+    self.assertTrue(check_vital('temperature', 35.3, 'C'))   # Warning - should return True
+    self.assertFalse(check_vital('temperature', 34.0, 'C'))  # Critical - should return False
+
+  def test_temperature_ranges_consistency(self):
+    # Test that temperature ranges are consistent between units
+    # 95°F should equal 35°C, 102°F should equal ~38.9°C
+    self.assertTrue(is_vital_ok('temperature', 95, 'F'))
+    self.assertTrue(is_vital_ok('temperature', 35, 'C'))
+    self.assertTrue(is_vital_ok('temperature', 102, 'F'))
+    self.assertTrue(is_vital_ok('temperature', 38.9, 'C'))
+    
+    # Just outside ranges should both be false
+    self.assertFalse(is_vital_ok('temperature', 94, 'F'))
+    self.assertFalse(is_vital_ok('temperature', 34.4, 'C'))  # ~94°F
 
 
 if __name__ == '__main__':
